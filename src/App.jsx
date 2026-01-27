@@ -26,9 +26,10 @@ const TWStockRSMonitor = () => {
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [watchList, setWatchList] = useState([]);
+  const [useRealData, setUseRealData] = useState(true);
 
   useEffect(() => {
-    loadRealStockData();
+    loadStockData();
     const savedBotToken = localStorage.getItem('telegramBotToken');
     const savedChatId = localStorage.getItem('telegramChatId');
     const savedWatchList = localStorage.getItem('watchList');
@@ -41,6 +42,51 @@ const TWStockRSMonitor = () => {
     filterStocks();
   }, [stocks, selectedIndustry, priceRange, period, searchTerm]);
 
+  const loadStockData = async () => {
+    if (useRealData) {
+      loadRealStockData();
+    } else {
+      loadMockData();
+    }
+  };
+
+  const loadMockData = () => {
+    setLoading(true);
+    setError(null);
+    setLoadingProgress(0);
+    
+    setTimeout(() => {
+      const industries = Object.values(INDUSTRY_MAP);
+      const mockStocks = [];
+      
+      for (let i = 0; i < 150; i++) {
+        const code = (2300 + i).toString();
+        const industry = industries[Math.floor(Math.random() * industries.length)];
+        const basePrice = Math.random() * 500 + 20;
+        const changePercent = (Math.random() - 0.5) * 10;
+        
+        mockStocks.push({
+          code,
+          name: `${industry.substring(0, 2)}股${i + 1}`,
+          price: parseFloat(basePrice.toFixed(2)),
+          changePercent,
+          industry,
+          returns: {
+            week1: changePercent,
+            month1: changePercent * 4,
+            month3: changePercent * 12,
+            month6: changePercent * 24,
+            year1: changePercent * 48
+          }
+        });
+      }
+      
+      setLoadingProgress(100);
+      setStocks(mockStocks);
+      setLoading(false);
+    }, 500);
+  };
+
   const loadRealStockData = async () => {
     setLoading(true);
     setError(null);
@@ -49,16 +95,43 @@ const TWStockRSMonitor = () => {
       setLoadingProgress(10);
       const today = new Date();
       const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
-      const url = `https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${dateStr}&type=ALLBUT0999&response=json`;
-      const response = await fetch(url);
-      const data = await response.json();
       
-      if (data.stat !== 'OK' || !data.data9 || data.data9.length === 0) {
-        throw new Error('今日可能非交易日，請稍後再試');
+      // 嘗試不同的 API 端點
+      let data = null;
+      let urls = [
+        `https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${dateStr}&type=ALLBUT0999&response=json`,
+        `https://www.twse.com.tw/exchangeReport/MI_INDEX?date=${dateStr}&type=ALLBUT0999&response=json`,
+        `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?date=${dateStr}&response=json`
+      ];
+      
+      for (let url of urls) {
+        try {
+          console.log('嘗試 API:', url);
+          const response = await fetch(url);
+          const json = await response.json();
+          console.log('API 回應:', json);
+          
+          if (json.stat === 'OK' && (json.data9 || json.data)) {
+            data = json;
+            break;
+          }
+        } catch (e) {
+          console.log('API 失敗:', e);
+          continue;
+        }
+      }
+      
+      if (!data || (data.stat !== 'OK')) {
+        throw new Error(`API 回應異常。狀態: ${data?.stat || '無回應'}，請稍後再試或使用模擬資料`);
+      }
+      
+      const stockData = data.data9 || data.data;
+      if (!stockData || stockData.length === 0) {
+        throw new Error('今日盤後資料尚未更新，通常於下午 4:30 後更新，請稍後再試');
       }
       
       setLoadingProgress(30);
-      const stockList = data.data9.map(row => {
+      const stockList = stockData.map(row => {
         const code = row[0].trim();
         const name = row[1].trim();
         const closePrice = parseFloat(row[8].replace(/,/g, '') || 0);
@@ -71,10 +144,19 @@ const TWStockRSMonitor = () => {
         };
       }).filter(stock => stock.price > 0 && stock.code.length === 4);
       
+      if (stockList.length === 0) {
+        throw new Error('無有效股票資料，請稍後再試或切換模擬資料');
+      }
+      
       setLoadingProgress(100);
       setStocks(stockList);
+      console.log('成功載入股票數量:', stockList.length);
     } catch (err) {
-      setError(err.message || '無法載入台股資料');
+      console.error('載入失敗詳情:', err);
+      setError(err.message || '無法載入台股資料，請檢查網路或稍後再試');
+      // 自動切換到模擬資料
+      setUseRealData(false);
+      setTimeout(() => loadMockData(), 1000);
     } finally {
       setLoading(false);
     }
@@ -153,7 +235,7 @@ const TWStockRSMonitor = () => {
     const top10 = filteredStocks.slice(0, 10);
     let message = `📊 <b>台股 RS Rating Top 10</b>\n<i>${period} 排名</i>\n\n`;
     top10.forEach((stock, index) => {
-      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | $${stock.price.toFixed(2)}\n   報酬: ${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%\n\n`;
+      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   報酬: ${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%\n\n`;
     });
     sendTelegramMessage(message);
   };
@@ -183,8 +265,12 @@ const TWStockRSMonitor = () => {
               <div className="flex items-start gap-3">
                 <Info className="w-6 h-6 mt-0.5 flex-shrink-0" />
                 <div>
-                  <h3 className="font-bold text-lg mb-1">✨ 已串接真實台股資料 + Telegram 通知！</h3>
-                  <p className="text-sm text-blue-100">資料來源：台灣證券交易所。支援 Telegram Bot 警示通知。</p>
+                  <h3 className="font-bold text-lg mb-1">✨ 台股 RS Rating 監控 + Telegram 通知！</h3>
+                  <p className="text-sm text-blue-100">
+                    {useRealData 
+                      ? '資料來源：台灣證券交易所（交易日盤後更新）' 
+                      : '⚠️ 目前使用模擬資料，點擊上方切換按鈕使用真實資料'}
+                  </p>
                 </div>
               </div>
               <button onClick={() => setShowInfo(false)} className="text-white hover:text-blue-200 text-xl">×</button>
@@ -206,7 +292,16 @@ const TWStockRSMonitor = () => {
                 <Send className="w-4 h-4" />
                 Telegram
               </button>
-              <button onClick={loadRealStockData} disabled={loading} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+              <button 
+                onClick={() => {
+                  setUseRealData(!useRealData);
+                  setTimeout(() => loadStockData(), 100);
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${useRealData ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}
+              >
+                {useRealData ? '真實資料' : '模擬資料'}
+              </button>
+              <button onClick={loadStockData} disabled={loading} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                 重新整理
               </button>
@@ -277,9 +372,20 @@ const TWStockRSMonitor = () => {
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1">
                 <h3 className="font-semibold text-red-800">載入失敗</h3>
                 <p className="text-sm text-red-700 mt-1">{error}</p>
+                <p className="text-sm text-red-600 mt-2">已自動切換至模擬資料模式</p>
+                <button 
+                  onClick={() => {
+                    setError(null);
+                    setUseRealData(true);
+                    loadStockData();
+                  }}
+                  className="mt-3 bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700"
+                >
+                  重試真實資料
+                </button>
               </div>
             </div>
           </div>
@@ -352,10 +458,9 @@ const TWStockRSMonitor = () => {
                   <thead className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white">
                     <tr>
                       <th className="px-3 py-3 text-left text-sm">排名</th>
-                      <th className="px-3 py-3 text-left text-sm">代號</th>
-                      <th className="px-3 py-3 text-left text-sm">名稱</th>
+                      <th className="px-3 py-3 text-left text-sm">代號 / 名稱</th>
                       <th className="px-3 py-3 text-left text-sm hidden md:table-cell">產業</th>
-                      <th className="px-3 py-3 text-right text-sm">股價</th>
+                      <th className="px-3 py-3 text-right text-sm">股價 (NT$)</th>
                       <th className="px-3 py-3 text-center text-sm">RS</th>
                       <th className="px-3 py-3 text-right text-sm hidden sm:table-cell">報酬</th>
                       <th className="px-3 py-3 text-center text-sm">監控</th>
@@ -365,10 +470,14 @@ const TWStockRSMonitor = () => {
                     {filteredStocks.slice(0, 100).map((stock, index) => (
                       <tr key={stock.code} className="border-b hover:bg-gray-50">
                         <td className="px-3 py-3"><span className="font-semibold text-gray-700 text-sm">#{index + 1}</span></td>
-                        <td className="px-3 py-3 font-mono text-sm font-semibold">{stock.code}</td>
-                        <td className="px-3 py-3 text-sm">{stock.name}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-col">
+                            <span className="font-mono text-sm font-bold text-indigo-600">{stock.code}</span>
+                            <span className="text-sm text-gray-700">{stock.name}</span>
+                          </div>
+                        </td>
                         <td className="px-3 py-3 hidden md:table-cell"><span className="px-2 py-1 bg-gray-100 rounded text-xs">{stock.industry}</span></td>
-                        <td className="px-3 py-3 text-right font-semibold text-sm">${stock.price.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-sm">NT$ {stock.price.toFixed(2)}</td>
                         <td className="px-3 py-3 text-center">
                           <span className={`px-2 py-1 rounded-full text-xs font-bold ${getRSBgColor(stock.rsRating)} ${getRSColor(stock.rsRating)}`}>{stock.rsRating}</span>
                         </td>
@@ -400,10 +509,11 @@ const TWStockRSMonitor = () => {
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">💡 使用說明</h3>
           <ul className="text-sm text-blue-800 space-y-1">
-            <li>• 資料來源：台灣證券交易所，每日盤後更新</li>
+            <li>• 資料來源：{useRealData ? '台灣證券交易所（交易日盤後更新）' : '模擬資料（用於測試功能）'}</li>
             <li>• RS Rating：0-99 評分，數字越高表現越強</li>
             <li>• Telegram：設定後可接收通知</li>
             <li>• 點擊鈴鐺加入監控清單</li>
+            {useRealData && <li>• ⚠️ 週末及國定假日證交所無資料，可切換模擬資料測試</li>}
           </ul>
         </div>
       </div>
