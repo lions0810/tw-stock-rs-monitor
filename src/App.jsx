@@ -27,6 +27,8 @@ const TWStockRSMonitor = () => {
   const [telegramChatId, setTelegramChatId] = useState('');
   const [watchList, setWatchList] = useState([]);
   const [useRealData, setUseRealData] = useState(true);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [rawApiData, setRawApiData] = useState(null);
 
   useEffect(() => {
     loadStockData();
@@ -113,6 +115,7 @@ const TWStockRSMonitor = () => {
           
           if (json.stat === 'OK' && (json.data9 || json.data)) {
             data = json;
+            setRawApiData(json); // 儲存原始資料供檢視
             break;
           }
         } catch (e) {
@@ -134,13 +137,50 @@ const TWStockRSMonitor = () => {
       const stockList = stockData.map(row => {
         const code = row[0].trim();
         const name = row[1].trim();
-        const closePrice = parseFloat(row[8].replace(/,/g, '') || 0);
-        const changePercent = parseFloat(row[11].replace(/,/g, '') || 0);
+        
+        // 嘗試找到正確的收盤價欄位
+        // 證交所格式: [0]代號 [1]名稱 [2]成交股數 [3]成交筆數 [4]成交金額 [5]開盤 [6]最高 [7]最低 [8]收盤
+        // 但有時格式會變，所以我們多試幾個
+        let closePrice = 0;
+        let changePercent = 0;
+        
+        // 嘗試不同的欄位位置
+        const possiblePriceFields = [8, 6, 5, 4]; // 收盤價可能的位置
+        for (let index of possiblePriceFields) {
+          const price = parseFloat(String(row[index]).replace(/,/g, '').replace(/[+\-]/g, '') || 0);
+          // 台股股價通常在 10-2000 之間
+          if (price >= 1 && price <= 10000) {
+            closePrice = price;
+            break;
+          }
+        }
+        
+        // 漲跌幅通常在 [9] 或 [10] 或 [11]
+        const possibleChangeFields = [9, 10, 11];
+        for (let index of possibleChangeFields) {
+          const change = parseFloat(String(row[index]).replace(/,/g, '').replace(/%/g, '') || 0);
+          if (Math.abs(change) <= 100) { // 漲跌幅通常不會超過 100%
+            changePercent = change;
+            break;
+          }
+        }
+        
         const industryCode = code.substring(0, 2);
+        
+        console.log(`${code} ${name}: 收盤=${closePrice}, 漲跌幅=${changePercent}%, 原始資料=`, row);
+        
         return {
-          code, name, price: closePrice, changePercent,
+          code, name, 
+          price: closePrice, 
+          changePercent,
           industry: INDUSTRY_MAP[industryCode] || '其他',
-          returns: { week1: changePercent, month1: changePercent * 4, month3: changePercent * 12, month6: changePercent * 24, year1: changePercent * 48 }
+          returns: { 
+            week1: changePercent, 
+            month1: changePercent * 4, 
+            month3: changePercent * 12, 
+            month6: changePercent * 24, 
+            year1: changePercent * 48 
+          }
         };
       }).filter(stock => stock.price > 0 && stock.code.length === 4);
       
@@ -292,6 +332,9 @@ const TWStockRSMonitor = () => {
                 <Send className="w-4 h-4" />
                 Telegram
               </button>
+              <button onClick={() => setShowDebugInfo(!showDebugInfo)} className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
+                {showDebugInfo ? '隱藏' : '顯示'}除錯
+              </button>
               <button 
                 onClick={() => {
                   setUseRealData(!useRealData);
@@ -393,6 +436,23 @@ const TWStockRSMonitor = () => {
 
         {stocks.length > 0 && (
           <>
+            {showDebugInfo && rawApiData && (
+              <div className="bg-gray-900 text-green-400 rounded-lg p-4 mb-6 font-mono text-xs overflow-x-auto">
+                <h3 className="text-white font-bold mb-2">🔍 API 原始資料（除錯用）</h3>
+                <div className="mb-2">
+                  <strong className="text-yellow-400">API 類型:</strong> {Array.isArray(rawApiData) ? 'OpenAPI (JSON物件陣列)' : '舊版API'}
+                </div>
+                <div className="mb-2">
+                  <strong className="text-yellow-400">第一筆資料:</strong>
+                  <pre>{JSON.stringify(rawApiData?.[0], null, 2)}</pre>
+                </div>
+                <div>
+                  <strong className="text-yellow-400">解析結果 (台積電 2330):</strong>
+                  <pre>{JSON.stringify(stocks.find(s => s.code === '2330'), null, 2)}</pre>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white rounded-lg shadow-lg p-4 md:p-6 mb-6">
               <div className="flex items-center gap-2 mb-4">
                 <Filter className="w-5 h-5 text-gray-600" />
