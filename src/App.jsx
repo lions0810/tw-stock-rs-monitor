@@ -29,20 +29,78 @@ const TWStockRSMonitor = () => {
   const [useRealData, setUseRealData] = useState(true);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [rawApiData, setRawApiData] = useState(null);
+  const [autoNotify, setAutoNotify] = useState(true);
+  const [alertConditions, setAlertConditions] = useState({ rsThreshold: 80, priceChangeThreshold: 5 });
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(30);
+  const [dailyReport, setDailyReport] = useState(true);
+  const [lastReportDate, setLastReportDate] = useState('');
 
   useEffect(() => {
     loadStockData();
     const savedBotToken = localStorage.getItem('telegramBotToken');
     const savedChatId = localStorage.getItem('telegramChatId');
     const savedWatchList = localStorage.getItem('watchList');
+    const savedAutoNotify = localStorage.getItem('autoNotify');
+    const savedAutoRefresh = localStorage.getItem('autoRefresh');
+    const savedRefreshInterval = localStorage.getItem('refreshInterval');
+    const savedDailyReport = localStorage.getItem('dailyReport');
+    const savedLastReportDate = localStorage.getItem('lastReportDate');
+    
     if (savedBotToken) setTelegramBotToken(savedBotToken);
     if (savedChatId) setTelegramChatId(savedChatId);
     if (savedWatchList) setWatchList(JSON.parse(savedWatchList));
+    if (savedAutoNotify !== null) setAutoNotify(savedAutoNotify === 'true');
+    if (savedAutoRefresh !== null) setAutoRefresh(savedAutoRefresh === 'true');
+    if (savedRefreshInterval) setRefreshInterval(Number(savedRefreshInterval));
+    if (savedDailyReport !== null) setDailyReport(savedDailyReport === 'true');
+    if (savedLastReportDate) setLastReportDate(savedLastReportDate);
   }, []);
 
   useEffect(() => {
     filterStocks();
   }, [stocks, selectedIndustry, priceRange, period, searchTerm]);
+
+  // 定時自動重新整理
+  useEffect(() => {
+    if (!autoRefresh || !useRealData) return;
+    
+    const interval = setInterval(() => {
+      console.log(`定時自動重新整理（每 ${refreshInterval} 分鐘）`);
+      loadStockData();
+    }, refreshInterval * 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, [autoRefresh, refreshInterval, useRealData]);
+
+  // 每日收盤報告
+  useEffect(() => {
+    if (!dailyReport || !telegramBotToken || !telegramChatId || !useRealData) return;
+    
+    const checkDailyReport = () => {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      
+      // 檢查是否為交易日收盤後（週一到週五，下午 4:30 後）
+      const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
+      const isAfterClose = currentHour > 16 || (currentHour === 16 && currentMinute >= 30);
+      
+      if (isWeekday && isAfterClose && lastReportDate !== today && stocks.length > 0) {
+        console.log('發送每日收盤報告');
+        sendDailyReport();
+        setLastReportDate(today);
+        localStorage.setItem('lastReportDate', today);
+      }
+    };
+    
+    // 每分鐘檢查一次
+    const interval = setInterval(checkDailyReport, 60 * 1000);
+    checkDailyReport(); // 立即檢查一次
+    
+    return () => clearInterval(interval);
+  }, [dailyReport, telegramBotToken, telegramChatId, stocks, lastReportDate, useRealData]);
 
   const loadStockData = async () => {
     if (useRealData) {
@@ -191,6 +249,11 @@ const TWStockRSMonitor = () => {
       setLoadingProgress(100);
       setStocks(stockList);
       console.log('成功載入股票數量:', stockList.length);
+      
+      // 自動檢查警示
+      if (autoNotify && useRealData) {
+        setTimeout(() => autoCheckAndNotify(stockList), 1000);
+      }
     } catch (err) {
       console.error('載入失敗詳情:', err);
       setError(err.message || '無法載入台股資料，請檢查網路或稍後再試');
@@ -247,10 +310,12 @@ const TWStockRSMonitor = () => {
     localStorage.setItem('watchList', JSON.stringify(newList));
   };
 
-  const sendTelegramMessage = async (message) => {
+  const sendTelegramMessage = async (message, silent = false) => {
     if (!telegramBotToken || !telegramChatId) {
-      alert('請先設定 Telegram Bot');
-      setShowTelegramSetup(true);
+      if (!silent) {
+        alert('請先設定 Telegram Bot');
+        setShowTelegramSetup(true);
+      }
       return;
     }
     try {
@@ -262,12 +327,15 @@ const TWStockRSMonitor = () => {
       });
       const data = await response.json();
       if (data.ok) {
-        alert('✅ 通知已發送！');
+        if (!silent) alert('✅ 通知已發送！');
+        console.log('Telegram 通知已發送');
       } else {
-        alert('❌ 發送失敗：' + (data.description || '請檢查設定'));
+        if (!silent) alert('❌ 發送失敗：' + (data.description || '請檢查設定'));
+        console.error('Telegram 發送失敗:', data);
       }
     } catch (error) {
-      alert('❌ 發送失敗');
+      if (!silent) alert('❌ 發送失敗');
+      console.error('Telegram 錯誤:', error);
     }
   };
 
@@ -278,6 +346,64 @@ const TWStockRSMonitor = () => {
       message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   報酬: ${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%\n\n`;
     });
     sendTelegramMessage(message);
+  };
+
+  const sendDailyReport = () => {
+    if (filteredStocks.length === 0) return;
+    
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+    
+    // Top 10 強勢股
+    const top10 = [...filteredStocks].slice(0, 10);
+    
+    // 統計資訊
+    const totalStocks = filteredStocks.length;
+    const strongStocks = filteredStocks.filter(s => s.rsRating >= 80).length;
+    const avgRS = Math.round(filteredStocks.reduce((sum, s) => sum + s.rsRating, 0) / totalStocks);
+    
+    // 漲幅前 3 名
+    const topGainers = [...filteredStocks].sort((a, b) => b.changePercent - a.changePercent).slice(0, 3);
+    
+    // 跌幅前 3 名
+    const topLosers = [...filteredStocks].sort((a, b) => a.changePercent - b.changePercent).slice(0, 3);
+    
+    let message = `📊 <b>台股每日收盤報告</b>\n📅 ${dateStr}\n\n`;
+    
+    message += `📈 <b>市場概況</b>\n`;
+    message += `總股票數: ${totalStocks}\n`;
+    message += `強勢股 (RS≥80): ${strongStocks}\n`;
+    message += `平均 RS Rating: ${avgRS}\n\n`;
+    
+    message += `🏆 <b>RS Rating Top 5</b>\n`;
+    top10.slice(0, 5).forEach((stock, index) => {
+      message += `${index + 1}. ${stock.name}(${stock.code}) - RS:${stock.rsRating}\n`;
+    });
+    message += `\n`;
+    
+    message += `🔴 <b>漲幅前 3 名</b>\n`;
+    topGainers.forEach((stock, index) => {
+      message += `${index + 1}. ${stock.name}(${stock.code}) +${stock.changePercent.toFixed(2)}%\n`;
+    });
+    message += `\n`;
+    
+    message += `🟢 <b>跌幅前 3 名</b>\n`;
+    topLosers.forEach((stock, index) => {
+      message += `${index + 1}. ${stock.name}(${stock.code}) ${stock.changePercent.toFixed(2)}%\n`;
+    });
+    
+    // 監控清單狀態
+    if (watchList.length > 0) {
+      message += `\n📌 <b>監控清單</b>\n`;
+      watchList.forEach(watchStock => {
+        const current = filteredStocks.find(s => s.code === watchStock.code);
+        if (current) {
+          message += `${current.name}(${current.code}): RS ${current.rsRating}, ${current.changePercent >= 0 ? '+' : ''}${current.changePercent.toFixed(2)}%\n`;
+        }
+      });
+    }
+    
+    sendTelegramMessage(message, true);
   };
 
   const industries = ['全部', ...new Set(stocks.map(s => s.industry))].sort();
@@ -369,6 +495,82 @@ const TWStockRSMonitor = () => {
               </ol>
             </div>
             <div className="space-y-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="autoNotify"
+                    checked={autoNotify}
+                    onChange={(e) => {
+                      setAutoNotify(e.target.checked);
+                      localStorage.setItem('autoNotify', e.target.checked);
+                    }}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="autoNotify" className="text-sm font-medium text-yellow-900">
+                    ✅ 每次重新整理後自動檢查並通知
+                  </label>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="checkbox"
+                    id="autoRefresh"
+                    checked={autoRefresh}
+                    onChange={(e) => {
+                      setAutoRefresh(e.target.checked);
+                      localStorage.setItem('autoRefresh', e.target.checked);
+                    }}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="autoRefresh" className="text-sm font-medium text-blue-900">
+                    ⏰ 定時自動重新整理
+                  </label>
+                </div>
+                <div className="ml-6 flex items-center gap-2">
+                  <span className="text-xs text-blue-700">每</span>
+                  <select
+                    value={refreshInterval}
+                    onChange={(e) => {
+                      setRefreshInterval(Number(e.target.value));
+                      localStorage.setItem('refreshInterval', e.target.value);
+                    }}
+                    disabled={!autoRefresh}
+                    className="border rounded px-2 py-1 text-sm"
+                  >
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="15">15</option>
+                    <option value="30">30</option>
+                    <option value="60">60</option>
+                  </select>
+                  <span className="text-xs text-blue-700">分鐘自動重新整理一次（僅限真實資料模式）</span>
+                </div>
+              </div>
+
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="dailyReport"
+                    checked={dailyReport}
+                    onChange={(e) => {
+                      setDailyReport(e.target.checked);
+                      localStorage.setItem('dailyReport', e.target.checked);
+                    }}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="dailyReport" className="text-sm font-medium text-purple-900">
+                    📊 每日收盤報告（週一至週五 16:30 後自動發送）
+                  </label>
+                </div>
+                <p className="text-xs text-purple-700 mt-1 ml-6">
+                  包含：市場概況、RS Top 5、漲跌幅排行、監控清單狀態
+                </p>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium mb-2">Bot Token</label>
                 <input type="text" value={telegramBotToken} onChange={(e) => setTelegramBotToken(e.target.value)} placeholder="123456:ABC-DEF..." className="w-full border rounded-lg px-3 py-2 font-mono text-sm" />
