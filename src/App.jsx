@@ -26,11 +26,15 @@ const TWStockRSMonitor = () => {
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [watchList, setWatchList] = useState([]);
-  const [useRealData, setUseRealData] = useState(true);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [rawApiData, setRawApiData] = useState(null);
   const [autoNotify, setAutoNotify] = useState(true);
-  const [alertConditions, setAlertConditions] = useState({ rsThreshold: 80, priceChangeThreshold: 5 });
+  const [alertConditions, setAlertConditions] = useState({ 
+    rsThreshold: 80, 
+    priceChangeThreshold: 5,
+    industries: [],
+    notifyOnRsThreshold: false
+  });
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [dailyReport, setDailyReport] = useState(true);
@@ -63,7 +67,7 @@ const TWStockRSMonitor = () => {
 
   // 定時自動重新整理
   useEffect(() => {
-    if (!autoRefresh || !useRealData) return;
+    if (!autoRefresh) return;
     
     const interval = setInterval(() => {
       console.log(`定時自動重新整理（每 ${refreshInterval} 分鐘）`);
@@ -71,11 +75,11 @@ const TWStockRSMonitor = () => {
     }, refreshInterval * 60 * 1000);
     
     return () => clearInterval(interval);
-  }, [autoRefresh, refreshInterval, useRealData]);
+  }, [autoRefresh, refreshInterval]);
 
   // 每日收盤報告
   useEffect(() => {
-    if (!dailyReport || !telegramBotToken || !telegramChatId || !useRealData) return;
+    if (!dailyReport || !telegramBotToken || !telegramChatId) return;
     
     const checkDailyReport = () => {
       const now = new Date();
@@ -100,51 +104,10 @@ const TWStockRSMonitor = () => {
     checkDailyReport(); // 立即檢查一次
     
     return () => clearInterval(interval);
-  }, [dailyReport, telegramBotToken, telegramChatId, stocks, lastReportDate, useRealData]);
+  }, [dailyReport, telegramBotToken, telegramChatId, stocks, lastReportDate]);
 
   const loadStockData = async () => {
-    if (useRealData) {
-      loadRealStockData();
-    } else {
-      loadMockData();
-    }
-  };
-
-  const loadMockData = () => {
-    setLoading(true);
-    setError(null);
-    setLoadingProgress(0);
-    
-    setTimeout(() => {
-      const industries = Object.values(INDUSTRY_MAP);
-      const mockStocks = [];
-      
-      for (let i = 0; i < 150; i++) {
-        const code = (2300 + i).toString();
-        const industry = industries[Math.floor(Math.random() * industries.length)];
-        const basePrice = Math.random() * 500 + 20;
-        const changePercent = (Math.random() - 0.5) * 10;
-        
-        mockStocks.push({
-          code,
-          name: `${industry.substring(0, 2)}股${i + 1}`,
-          price: parseFloat(basePrice.toFixed(2)),
-          changePercent,
-          industry,
-          returns: {
-            week1: changePercent,
-            month1: changePercent * 4,
-            month3: changePercent * 12,
-            month6: changePercent * 24,
-            year1: changePercent * 48
-          }
-        });
-      }
-      
-      setLoadingProgress(100);
-      setStocks(mockStocks);
-      setLoading(false);
-    }, 500);
+    loadRealStockData();
   };
 
   const loadRealStockData = async () => {
@@ -251,15 +214,12 @@ const TWStockRSMonitor = () => {
       console.log('成功載入股票數量:', stockList.length);
       
       // 自動檢查警示
-      if (autoNotify && useRealData) {
+      if (autoNotify) {
         setTimeout(() => autoCheckAndNotify(stockList), 1000);
       }
     } catch (err) {
       console.error('載入失敗詳情:', err);
       setError(err.message || '無法載入台股資料，請檢查網路或稍後再試');
-      // 自動切換到模擬資料
-      setUseRealData(false);
-      setTimeout(() => loadMockData(), 1000);
     } finally {
       setLoading(false);
     }
@@ -343,7 +303,7 @@ const TWStockRSMonitor = () => {
     const top10 = filteredStocks.slice(0, 10);
     let message = `📊 <b>台股 RS Rating Top 10</b>\n<i>${period} 排名</i>\n\n`;
     top10.forEach((stock, index) => {
-      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   報酬: ${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%\n\n`;
+      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   漲跌: ${stock.change >= 0 ? '+' : ''}${stock.change.toFixed(2)} (${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%)\n\n`;
     });
     sendTelegramMessage(message);
   };
@@ -383,13 +343,13 @@ const TWStockRSMonitor = () => {
     
     message += `🔴 <b>漲幅前 3 名</b>\n`;
     topGainers.forEach((stock, index) => {
-      message += `${index + 1}. ${stock.name}(${stock.code}) +${stock.changePercent.toFixed(2)}%\n`;
+      message += `${index + 1}. ${stock.name}(${stock.code}) +${stock.change.toFixed(2)} (+${stock.changePercent.toFixed(2)}%)\n`;
     });
     message += `\n`;
     
     message += `🟢 <b>跌幅前 3 名</b>\n`;
     topLosers.forEach((stock, index) => {
-      message += `${index + 1}. ${stock.name}(${stock.code}) ${stock.changePercent.toFixed(2)}%\n`;
+      message += `${index + 1}. ${stock.name}(${stock.code}) ${stock.change.toFixed(2)} (${stock.changePercent.toFixed(2)}%)\n`;
     });
     
     // 監控清單狀態
@@ -398,7 +358,7 @@ const TWStockRSMonitor = () => {
       watchList.forEach(watchStock => {
         const current = filteredStocks.find(s => s.code === watchStock.code);
         if (current) {
-          message += `${current.name}(${current.code}): RS ${current.rsRating}, ${current.changePercent >= 0 ? '+' : ''}${current.changePercent.toFixed(2)}%\n`;
+          message += `${current.name}(${current.code}): RS ${current.rsRating}, ${current.change >= 0 ? '+' : ''}${current.change.toFixed(2)} (${current.changePercent >= 0 ? '+' : ''}${current.changePercent.toFixed(2)}%)\n`;
         }
       });
     }
@@ -432,11 +392,7 @@ const TWStockRSMonitor = () => {
                 <Info className="w-6 h-6 mt-0.5 flex-shrink-0" />
                 <div>
                   <h3 className="font-bold text-lg mb-1">✨ 台股 RS Rating 監控 + Telegram 通知！</h3>
-                  <p className="text-sm text-blue-100">
-                    {useRealData 
-                      ? '資料來源：台灣證券交易所（交易日盤後更新）' 
-                      : '⚠️ 目前使用模擬資料，點擊上方切換按鈕使用真實資料'}
-                  </p>
+                  <p className="text-sm text-blue-100">資料來源：台灣證券交易所（交易日盤後更新）</p>
                 </div>
               </div>
               <button onClick={() => setShowInfo(false)} className="text-white hover:text-blue-200 text-xl">×</button>
@@ -460,15 +416,6 @@ const TWStockRSMonitor = () => {
               </button>
               <button onClick={() => setShowDebugInfo(!showDebugInfo)} className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
                 {showDebugInfo ? '隱藏' : '顯示'}除錯
-              </button>
-              <button 
-                onClick={() => {
-                  setUseRealData(!useRealData);
-                  setTimeout(() => loadStockData(), 100);
-                }}
-                className={`px-4 py-2 rounded-lg text-sm font-medium ${useRealData ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}
-              >
-                {useRealData ? '真實資料' : '模擬資料'}
               </button>
               <button onClick={loadStockData} disabled={loading} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -724,7 +671,7 @@ const TWStockRSMonitor = () => {
                       <th className="px-3 py-3 text-left text-sm hidden md:table-cell">產業</th>
                       <th className="px-3 py-3 text-right text-sm">股價 (NT$)</th>
                       <th className="px-3 py-3 text-center text-sm">RS</th>
-                      <th className="px-3 py-3 text-right text-sm hidden sm:table-cell">報酬</th>
+                      <th className="px-3 py-3 text-right text-sm hidden sm:table-cell">當日漲跌</th>
                       <th className="px-3 py-3 text-center text-sm">監控</th>
                     </tr>
                   </thead>
@@ -743,8 +690,13 @@ const TWStockRSMonitor = () => {
                         <td className="px-3 py-3 text-center">
                           <span className={`px-2 py-1 rounded-full text-xs font-bold ${getRSBgColor(stock.rsRating)} ${getRSColor(stock.rsRating)}`}>{stock.rsRating}</span>
                         </td>
-                        <td className={`px-3 py-3 text-right font-semibold text-sm hidden sm:table-cell ${stock.currentReturn >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {stock.currentReturn >= 0 ? '+' : ''}{stock.currentReturn.toFixed(2)}%
+                        <td className="px-3 py-3 text-right hidden sm:table-cell">
+                          <div className={`font-semibold text-sm ${stock.change >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}
+                          </div>
+                          <div className={`text-xs ${stock.changePercent >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                            ({stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%)
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-center">
                           {watchList.find(s => s.code === stock.code) ? (
@@ -771,11 +723,12 @@ const TWStockRSMonitor = () => {
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">💡 使用說明</h3>
           <ul className="text-sm text-blue-800 space-y-1">
-            <li>• 資料來源：{useRealData ? '台灣證券交易所（交易日盤後更新）' : '模擬資料（用於測試功能）'}</li>
+            <li>• 資料來源：台灣證券交易所（交易日盤後更新）</li>
             <li>• RS Rating：0-99 評分，數字越高表現越強</li>
             <li>• Telegram：設定後可接收通知</li>
             <li>• 點擊鈴鐺加入監控清單</li>
-            {useRealData && <li>• ⚠️ 週末及國定假日證交所無資料，可切換模擬資料測試</li>}
+            <li>• RS 門檻通知：可掃描全市場符合條件的股票（搭配產業篩選）</li>
+            <li>• ⚠️ 週末及國定假日證交所無資料</li>
           </ul>
         </div>
       </div>
