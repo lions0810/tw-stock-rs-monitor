@@ -240,7 +240,12 @@ const TWStockRSMonitor = () => {
     filtered = filtered.map(stock => {
       const betterThan = allReturns.filter(r => r < stock.returns[key]).length;
       const rsRating = Math.round((betterThan / allReturns.length) * 99);
-      return { ...stock, rsRating, currentReturn: stock.returns[key] };
+      return { 
+        ...stock, 
+        rsRating, 
+        currentReturn: stock.returns[key],
+        change: stock.change || 0  // 確保 change 存在
+      };
     }).sort((a, b) => b.rsRating - a.rsRating);
     setFilteredStocks(filtered);
   };
@@ -303,7 +308,9 @@ const TWStockRSMonitor = () => {
     const top10 = filteredStocks.slice(0, 10);
     let message = `📊 <b>台股 RS Rating Top 10</b>\n<i>${period} 排名</i>\n\n`;
     top10.forEach((stock, index) => {
-      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   漲跌: ${stock.change >= 0 ? '+' : ''}${stock.change.toFixed(2)} (${stock.currentReturn >= 0 ? '+' : ''}${stock.currentReturn.toFixed(2)}%)\n\n`;
+      const change = stock.change || 0;
+      const currentReturn = stock.currentReturn || 0;
+      message += `${index + 1}. <b>${stock.name}(${stock.code})</b>\n   RS: ${stock.rsRating} | NT$ ${stock.price.toFixed(2)}\n   漲跌: ${change >= 0 ? '+' : ''}${change.toFixed(2)} (${currentReturn >= 0 ? '+' : ''}${currentReturn.toFixed(2)}%)\n\n`;
     });
     sendTelegramMessage(message);
   };
@@ -343,13 +350,17 @@ const TWStockRSMonitor = () => {
     
     message += `🔴 <b>漲幅前 3 名</b>\n`;
     topGainers.forEach((stock, index) => {
-      message += `${index + 1}. ${stock.name}(${stock.code}) +${stock.change.toFixed(2)} (+${stock.changePercent.toFixed(2)}%)\n`;
+      const change = stock.change || 0;
+      const changePercent = stock.changePercent || 0;
+      message += `${index + 1}. ${stock.name}(${stock.code}) +${change.toFixed(2)} (+${changePercent.toFixed(2)}%)\n`;
     });
     message += `\n`;
     
     message += `🟢 <b>跌幅前 3 名</b>\n`;
     topLosers.forEach((stock, index) => {
-      message += `${index + 1}. ${stock.name}(${stock.code}) ${stock.change.toFixed(2)} (${stock.changePercent.toFixed(2)}%)\n`;
+      const change = stock.change || 0;
+      const changePercent = stock.changePercent || 0;
+      message += `${index + 1}. ${stock.name}(${stock.code}) ${change.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
     });
     
     // 監控清單狀態
@@ -358,7 +369,9 @@ const TWStockRSMonitor = () => {
       watchList.forEach(watchStock => {
         const current = filteredStocks.find(s => s.code === watchStock.code);
         if (current) {
-          message += `${current.name}(${current.code}): RS ${current.rsRating}, ${current.change >= 0 ? '+' : ''}${current.change.toFixed(2)} (${current.changePercent >= 0 ? '+' : ''}${current.changePercent.toFixed(2)}%)\n`;
+          const change = current.change || 0;
+          const changePercent = current.changePercent || 0;
+          message += `${current.name}(${current.code}): RS ${current.rsRating}, ${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)\n`;
         }
       });
     }
@@ -691,11 +704,11 @@ const TWStockRSMonitor = () => {
                           <span className={`px-2 py-1 rounded-full text-xs font-bold ${getRSBgColor(stock.rsRating)} ${getRSColor(stock.rsRating)}`}>{stock.rsRating}</span>
                         </td>
                         <td className="px-3 py-3 text-right hidden sm:table-cell">
-                          <div className={`font-semibold text-sm ${stock.change >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}
+                          <div className={`font-semibold text-sm ${(stock.change || 0) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {(stock.change || 0) >= 0 ? '+' : ''}{(stock.change || 0).toFixed(2)}
                           </div>
-                          <div className={`text-xs ${stock.changePercent >= 0 ? 'text-red-500' : 'text-green-500'}`}>
-                            ({stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%)
+                          <div className={`text-xs ${(stock.changePercent || 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                            ({(stock.changePercent || 0) >= 0 ? '+' : ''}{(stock.changePercent || 0).toFixed(2)}%)
                           </div>
                         </td>
                         <td className="px-3 py-3 text-center">
