@@ -654,4 +654,479 @@ const TWStockRSMonitor = () => {
               {/* 操作按鈕 */}
               <div className="flex gap-3 flex-wrap">
                 <button 
-                  onClick={saveTelegramSettings
+                  onClick={saveTelegramSettings} 
+                  className="bg-blue-500 text-white px-5 py-2.5 rounded-xl hover:bg-blue-600 transition-all shadow-md hover:shadow-lg font-medium"
+                >
+                  💾 儲存設定
+                </button>
+                <button 
+                  onClick={() => sendTelegramMessage('✅ 測試通知成功！')} 
+                  className="bg-emerald-500 text-white px-5 py-2.5 rounded-xl hover:bg-emerald-600 transition-all shadow-md hover:shadow-lg font-medium"
+                >
+                  🧪 測試通知
+                </button>
+                <button 
+                  onClick={sendTopStocks} 
+                  className="bg-purple-500 text-white px-5 py-2.5 rounded-xl hover:bg-purple-600 transition-all shadow-md hover:shadow-lg font-medium"
+                >
+                  📊 發送 Top 10
+                </button>
+              </div>
+            </div>
+
+            {/* 監控清單 */}
+            {watchList.length > 0 && (
+              <div className="mt-6 pt-6 border-t border-slate-200">
+                <h4 className="font-semibold mb-3 text-slate-800 flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-blue-600" />
+                  監控清單 ({watchList.length})
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {watchList.map(stock => (
+                    <span 
+                      key={stock.code} 
+                      className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-full text-sm flex items-center gap-2 border border-blue-300"
+                    >
+                      <span className="font-medium">{stock.name}</span>
+                      <span className="text-blue-600">({stock.code})</span>
+                      <button 
+                        onClick={() => removeFromWatchList(stock.code)} 
+                        className="text-rose-600 hover:text-rose-800 font-bold ml-1"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 載入進度 */}
+        {loading && (
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border border-slate-200">
+            <div className="flex items-center gap-3 mb-4">
+              <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+              <span className="text-slate-700 font-medium">正在載入台股資料...</span>
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+              <div 
+                className="bg-gradient-to-r from-indigo-600 to-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${loadingProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 錯誤訊息 */}
+        {error && (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 mb-6">
+            <div className="flex items-start gap-3">
+              <div className="bg-rose-100 rounded-lg p-2">
+                <AlertCircle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-rose-800 text-lg">載入失敗</h3>
+                <p className="text-sm text-rose-700 mt-1">{error}</p>
+                <button 
+                  onClick={loadStockData}
+                  className="mt-4 bg-rose-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-rose-700 transition-all shadow-md font-medium"
+                >
+                  重試
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 除錯資訊 */}
+        {stocks.length > 0 && showDebugInfo && rawApiData && (
+          <div className="bg-slate-900 text-emerald-400 rounded-2xl p-5 mb-6 font-mono text-xs overflow-x-auto border border-slate-700">
+            <h3 className="text-white font-bold mb-3 text-base">🔍 API 原始資料除錯面板</h3>
+            <div className="space-y-4">
+              <div>
+                <strong className="text-amber-400">API 狀態:</strong> 
+                <span className="ml-2 text-white">{rawApiData.stat || 'N/A'}</span>
+              </div>
+              <div>
+                <strong className="text-amber-400">總資料筆數:</strong> 
+                <span className="ml-2 text-white">{(rawApiData.data9 || rawApiData.data)?.length || 0}</span>
+              </div>
+              <div>
+                <strong className="text-amber-400">成功解析筆數:</strong> 
+                <span className="ml-2 text-white">{stocks.length}</span>
+              </div>
+              
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">欄位格式說明（以 2881 富邦金為標準）:</strong>
+                <div className="mt-2 bg-slate-800 p-3 rounded-lg text-cyan-300 text-xs leading-relaxed">
+                  [0]證券代號 [1]證券名稱 [2]成交股數 [3]成交筆數 [4]成交金額<br/>
+                  [5]開盤價 [6]最高價 [7]最低價 <strong className="text-yellow-300">[8]收盤價</strong><br/>
+                  <strong className="text-yellow-300">[9]漲跌符號(+/-/X0)</strong> <strong className="text-yellow-300">[10]漲跌價差</strong> [11]買價 [12]買量 [13]賣價 [14]賣量
+                </div>
+              </div>
+
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">關鍵股票解析對比:</strong>
+                {['2330', '2881', '2454', '2412', '2317'].map(code => {
+                  const rawStock = (rawApiData.data9 || rawApiData.data)?.find(row => row[0]?.includes(code));
+                  const parsedStock = stocks.find(s => s.code === code);
+                  if (!rawStock || !parsedStock) return null;
+                  
+                  return (
+                    <div key={code} className="mt-3 bg-slate-800 p-3 rounded-lg">
+                      <div className="text-white font-bold mb-2">
+                        {code} {parsedStock.name}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <div className="text-cyan-400 mb-1">📋 原始資料:</div>
+                          <div className="text-emerald-300">
+                            [8]收盤: <strong>{rawStock[8]}</strong><br/>
+                            [9]符號: <strong>{rawStock[9]}</strong><br/>
+                            [10]價差: <strong>{rawStock[10]}</strong>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-cyan-400 mb-1">✅ 解析結果:</div>
+                          <div className="text-emerald-300">
+                            收盤價: <strong className="text-white">{parsedStock.price.toFixed(2)}</strong><br/>
+                            漲跌: <strong className={parsedStock.change >= 0 ? 'text-red-400' : 'text-green-400'}>
+                              {parsedStock.change >= 0 ? '+' : ''}{parsedStock.change.toFixed(2)}
+                            </strong><br/>
+                            漲跌幅: <strong className={parsedStock.changePercent >= 0 ? 'text-red-400' : 'text-green-400'}>
+                              {parsedStock.changePercent >= 0 ? '+' : ''}{parsedStock.changePercent.toFixed(2)}%
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">前 3 筆完整原始資料:</strong>
+                <pre className="mt-2 bg-slate-800 p-3 rounded-lg overflow-x-auto text-emerald-300">
+                  {JSON.stringify((rawApiData.data9 || rawApiData.data)?.slice(0, 3), null, 2)}
+                </pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 篩選條件 */}
+        {stocks.length > 0 && (
+          <>
+            <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border border-slate-200">
+              <div className="flex items-center gap-2 mb-5">
+                <div className="bg-indigo-100 rounded-lg p-2">
+                  <Filter className="w-5 h-5 text-indigo-600" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-800">篩選條件</h2>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">計算週期</label>
+                  <select 
+                    value={period} 
+                    onChange={(e) => setPeriod(e.target.value)} 
+                    className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
+                  >
+                    <option>1週</option>
+                    <option>1個月</option>
+                    <option>3個月</option>
+                    <option>6個月</option>
+                    <option>1年</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">產業</label>
+                  <select 
+                    value={selectedIndustry} 
+                    onChange={(e) => setSelectedIndustry(e.target.value)} 
+                    className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
+                  >
+                    {industries.map(ind => <option key={ind}>{ind}</option>)}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">最低股價</label>
+                  <input 
+                    type="number" 
+                    value={priceRange.min} 
+                    onChange={(e) => setPriceRange({...priceRange, min: Number(e.target.value)})} 
+                    className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">最高股價</label>
+                  <input 
+                    type="number" 
+                    value={priceRange.max} 
+                    onChange={(e) => setPriceRange({...priceRange, max: Number(e.target.value)})} 
+                    className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+              </div>
+              
+              <div className="mt-4">
+                <label className="block text-sm font-semibold text-slate-700 mb-2">搜尋股票</label>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input 
+                    type="text" 
+                    value={searchTerm} 
+                    onChange={(e) => setSearchTerm(e.target.value)} 
+                    placeholder="輸入代號或名稱（例如：2330 或 台積電）" 
+                    className="w-full pl-12 pr-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 統計卡片 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white rounded-xl shadow-md p-4 border border-slate-200 hover:shadow-lg transition-shadow">
+                <p className="text-xs text-slate-600 font-medium mb-1">符合條件</p>
+                <p className="text-3xl font-bold text-indigo-600">{filteredStocks.length}</p>
+                <p className="text-xs text-slate-500 mt-1">檔股票</p>
+              </div>
+              
+              <div className="bg-white rounded-xl shadow-md p-4 border border-slate-200 hover:shadow-lg transition-shadow">
+                <p className="text-xs text-slate-600 font-medium mb-1">強勢股</p>
+                <p className="text-3xl font-bold text-emerald-600">{filteredStocks.filter(s => s.rsRating >= 80).length}</p>
+                <p className="text-xs text-slate-500 mt-1">RS ≥ 80</p>
+              </div>
+              
+              <div className="bg-white rounded-xl shadow-md p-4 border border-slate-200 hover:shadow-lg transition-shadow">
+                <p className="text-xs text-slate-600 font-medium mb-1">中強勢股</p>
+                <p className="text-3xl font-bold text-blue-600">{filteredStocks.filter(s => s.rsRating >= 60 && s.rsRating < 80).length}</p>
+                <p className="text-xs text-slate-500 mt-1">RS 60-79</p>
+              </div>
+              
+              <div className="bg-white rounded-xl shadow-md p-4 border border-slate-200 hover:shadow-lg transition-shadow">
+                <p className="text-xs text-slate-600 font-medium mb-1">平均 RS</p>
+                <p className="text-3xl font-bold text-slate-800">
+                  {filteredStocks.length > 0 ? Math.round(filteredStocks.reduce((sum, s) => sum + s.rsRating, 0) / filteredStocks.length) : 0}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">整體表現</p>
+              </div>
+            </div>
+
+            {/* 股票列表 */}
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-slate-200">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 text-white">
+                    <tr>
+                      <th className="px-4 py-4 text-left text-sm font-semibold">排名</th>
+                      <th className="px-4 py-4 text-left text-sm font-semibold">代號 / 名稱</th>
+                      <th className="px-4 py-4 text-left text-sm font-semibold hidden md:table-cell">產業</th>
+                      <th className="px-4 py-4 text-right text-sm font-semibold">股價</th>
+                      <th className="px-4 py-4 text-center text-sm font-semibold">RS Rating</th>
+                      <th className="px-4 py-4 text-right text-sm font-semibold hidden sm:table-cell">當日漲跌</th>
+                      <th className="px-4 py-4 text-center text-sm font-semibold">監控</th>
+                      <th className="px-4 py-4 text-center text-sm font-semibold hidden lg:table-cell">詳情</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredStocks.slice(0, 100).map((stock, index) => (
+                      <React.Fragment key={stock.code}>
+                        <tr className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-4">
+                            <div className="flex items-center gap-2">
+                              {index < 3 && (
+                                <span className="text-lg">
+                                  {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                                </span>
+                              )}
+                              <span className="font-bold text-slate-700 text-sm">#{index + 1}</span>
+                            </div>
+                          </td>
+                          
+                          <td className="px-4 py-4">
+                            <div className="flex flex-col">
+                              <span className="font-mono text-sm font-bold text-indigo-600">{stock.code}</span>
+                              <span className="text-sm text-slate-700 font-medium">{stock.name}</span>
+                            </div>
+                          </td>
+                          
+                          <td className="px-4 py-4 hidden md:table-cell">
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium border border-slate-200">
+                              {stock.industry}
+                            </span>
+                          </td>
+                          
+                          <td className="px-4 py-4 text-right">
+                            <div className="font-bold text-slate-800">NT$ {stock.price.toFixed(2)}</div>
+                          </td>
+                          
+                          <td className="px-4 py-4 text-center">
+                            <span className={`px-3 py-1.5 rounded-full text-sm font-bold ${getRSBgColor(stock.rsRating)} ${getRSColor(stock.rsRating)}`}>
+                              {stock.rsRating}
+                            </span>
+                          </td>
+                          
+                          <td className="px-4 py-4 text-right hidden sm:table-cell">
+                            <div className={`font-bold text-sm ${getChangeColor(stock.change || 0)}`}>
+                              {(stock.change || 0) >= 0 ? '+' : ''}{(stock.change || 0).toFixed(2)}
+                            </div>
+                            <div className={`text-xs mt-0.5 ${getChangeColor(stock.changePercent || 0)}`}>
+                              ({(stock.changePercent || 0) >= 0 ? '+' : ''}{(stock.changePercent || 0).toFixed(2)}%)
+                            </div>
+                          </td>
+                          
+                          <td className="px-4 py-4 text-center">
+                            {watchList.find(s => s.code === stock.code) ? (
+                              <button 
+                                onClick={() => removeFromWatchList(stock.code)} 
+                                className="text-amber-500 hover:text-amber-700 transition-colors p-1 rounded-lg hover:bg-amber-50"
+                                title="移除監控"
+                              >
+                                <Bell className="w-5 h-5 fill-current" />
+                              </button>
+                            ) : (
+                              <button 
+                                onClick={() => addToWatchList(stock)} 
+                                className="text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-lg hover:bg-indigo-50"
+                                title="加入監控"
+                              >
+                                <BellOff className="w-5 h-5" />
+                              </button>
+                            )}
+                          </td>
+                          
+                          <td className="px-4 py-4 text-center hidden lg:table-cell">
+                            <button
+                              onClick={() => toggleRowExpansion(stock.code)}
+                              className="text-slate-500 hover:text-indigo-600 transition-colors p-1 rounded-lg hover:bg-indigo-50"
+                              title={expandedRows.has(stock.code) ? "收起" : "展開詳情"}
+                            >
+                              {expandedRows.has(stock.code) ? (
+                                <ChevronUp className="w-5 h-5" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5" />
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                        
+                        {/* 展開的詳細資訊 */}
+                        {expandedRows.has(stock.code) && (
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            <td colSpan="8" className="px-4 py-4">
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                <div className="bg-white rounded-lg p-3 border border-slate-200">
+                                  <p className="text-xs text-slate-600 mb-1">1週報酬</p>
+                                  <p className={`text-lg font-bold ${getChangeColor(stock.returns.week1)}`}>
+                                    {stock.returns.week1 >= 0 ? '+' : ''}{stock.returns.week1.toFixed(2)}%
+                                  </p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200">
+                                  <p className="text-xs text-slate-600 mb-1">1個月報酬</p>
+                                  <p className={`text-lg font-bold ${getChangeColor(stock.returns.month1)}`}>
+                                    {stock.returns.month1 >= 0 ? '+' : ''}{stock.returns.month1.toFixed(2)}%
+                                  </p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200">
+                                  <p className="text-xs text-slate-600 mb-1">3個月報酬</p>
+                                  <p className={`text-lg font-bold ${getChangeColor(stock.returns.month3)}`}>
+                                    {stock.returns.month3 >= 0 ? '+' : ''}{stock.returns.month3.toFixed(2)}%
+                                  </p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200">
+                                  <p className="text-xs text-slate-600 mb-1">6個月報酬</p>
+                                  <p className={`text-lg font-bold ${getChangeColor(stock.returns.month6)}`}>
+                                    {stock.returns.month6 >= 0 ? '+' : ''}{stock.returns.month6.toFixed(2)}%
+                                  </p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200">
+                                  <p className="text-xs text-slate-600 mb-1">1年報酬</p>
+                                  <p className={`text-lg font-bold ${getChangeColor(stock.returns.year1)}`}>
+                                    {stock.returns.year1 >= 0 ? '+' : ''}{stock.returns.year1.toFixed(2)}%
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {filteredStocks.length > 100 && (
+                <div className="bg-slate-50 px-6 py-4 text-center text-sm text-slate-600 border-t border-slate-200">
+                  顯示前 100 筆，共 <span className="font-bold text-indigo-600">{filteredStocks.length}</span> 筆
+                </div>
+              )}
+              
+              {filteredStocks.length === 0 && !loading && (
+                <div className="text-center py-16">
+                  <BarChart3 className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                  <p className="text-lg text-slate-500 font-medium">查無符合條件的股票</p>
+                  <p className="text-sm text-slate-400 mt-2">請調整篩選條件</p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* 使用說明 */}
+        <div className="mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
+          <h3 className="font-bold text-blue-900 mb-4 flex items-center gap-2 text-lg">
+            <div className="bg-blue-200 rounded-lg p-1.5">
+              <Info className="w-5 h-5 text-blue-700" />
+            </div>
+            使用說明
+          </h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="bg-white/60 rounded-xl p-4 border border-blue-100">
+              <h4 className="font-semibold text-blue-800 mb-2">📊 資料來源</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• 台灣證券交易所官方 API</li>
+                <li>• 交易日盤後更新（約 16:30 後）</li>
+                <li>• 週末及國定假日無資料</li>
+              </ul>
+            </div>
+            <div className="bg-white/60 rounded-xl p-4 border border-blue-100">
+              <h4 className="font-semibold text-blue-800 mb-2">📈 RS Rating 說明</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• 相對強度評級：0-99 分</li>
+                <li>• 數字越高表現越強勢</li>
+                <li>• ≥80 為強勢股（綠色）</li>
+                <li>• 60-79 為中強勢（藍色）</li>
+              </ul>
+            </div>
+            <div className="bg-white/60 rounded-xl p-4 border border-blue-100">
+              <h4 className="font-semibold text-blue-800 mb-2">🔔 Telegram 通知</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• 設定後可接收即時通知</li>
+                <li>• 支援自動通知與每日報告</li>
+                <li>• 可發送 Top 10 排行</li>
+              </ul>
+            </div>
+            <div className="bg-white/60 rounded-xl p-4 border border-blue-100">
+              <h4 className="font-semibold text-blue-800 mb-2">⚙️ 功能特色</h4>
+              <ul className="text-sm text-blue-700 space-y-1">
+                <li>• 點擊鈴鐺加入監控清單</li>
+                <li>• 支援產業、價格篩選</li>
+                <li>• 定時自動重新整理</li>
+                <li>• 展開查看多週期報酬</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default TWStockRSMonitor;
