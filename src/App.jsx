@@ -109,7 +109,18 @@ const TWStockRSMonitor = () => {
       const today = new Date();
       const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
       
+const loadStockData = async () => {
+    setLoading(true);
+    setError(null);
+    setLoadingProgress(0);
+    
+    try {
+      setLoadingProgress(10);
+      const today = new Date();
+      const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
+      
       let data = null;
+      let successfulUrl = ''; // 新增：用來記錄哪個 API 成功了
       const urls = [
         `https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${dateStr}&type=ALLBUT0999&response=json`,
         `https://www.twse.com.tw/exchangeReport/MI_INDEX?date=${dateStr}&type=ALLBUT0999&response=json`,
@@ -126,6 +137,7 @@ const TWStockRSMonitor = () => {
           if (json.stat === 'OK' && (json.data9 || json.data)) {
             data = json;
             setRawApiData(json);
+            successfulUrl = url; // 記錄成功的 URL
             break;
           }
         } catch (e) {
@@ -143,52 +155,54 @@ const TWStockRSMonitor = () => {
         throw new Error('今日盤後資料尚未更新，通常於下午 4:30 後更新，請稍後再試');
       }
       
+      const isStockDayAll = successfulUrl.includes('STOCK_DAY_ALL'); // 判斷是否為第三個 API
       setLoadingProgress(50);
       
       const stockList = stockData.map((row, idx) => {
         const code = row[0]?.trim() || '';
         const name = row[1]?.trim() || '';
         
-        // 證交所 API 欄位格式（以 2881 富邦金為標準）：
-        // [0]證券代號 [1]證券名稱 [2]成交股數 [3]成交筆數 [4]成交金額 
-        // [5]開盤價 [6]最高價 [7]最低價 [8]收盤價 
-        // [9]漲跌(+/-/X0) [10]漲跌價差 [11]最後揭示買價 [12]最後揭示買量
-        // [13]最後揭示賣價 [14]最後揭示賣量 [15]本益比
-        
-        // 解析收盤價 - 第 8 欄
         let closePrice = 0;
-        const closePriceStr = String(row[8] || '').replace(/,/g, '').trim();
-        closePrice = parseFloat(closePriceStr);
+        let changeSign = 0;
+        let change = 0;
         
-        // 如果收盤價無效，嘗試用最高價或開盤價
+        // 根據不同的 API 來源，採用不同的欄位解析邏輯
+        if (isStockDayAll) {
+          // STOCK_DAY_ALL 格式：[4]開盤 [5]最高 [6]最低 [7]收盤 [8]漲跌價差(含正負號)
+          closePrice = parseFloat(String(row[7] || '').replace(/,/g, '').trim());
+          
+          const changeStrRaw = String(row[8] || '').trim();
+          if (changeStrRaw.includes('+') || changeStrRaw.includes('red')) changeSign = 1;
+          else if (changeStrRaw.includes('-') || changeStrRaw.includes('green')) changeSign = -1;
+          else changeSign = 0;
+          
+          change = parseFloat(changeStrRaw.replace(/<[^>]+>/g, '').replace(/,/g, '').replace(/\+/g, '').replace(/\-/g, '').trim());
+          if (isNaN(change)) change = 0;
+          change = change * changeSign;
+
+        } else {
+          // MI_INDEX 格式：[5]開盤 [6]最高 [7]最低 [8]收盤 [9]漲跌符號 [10]漲跌價差
+          closePrice = parseFloat(String(row[8] || '').replace(/,/g, '').trim());
+          
+          const directionStr = String(row[9] || '').trim();
+          if (directionStr === '+' || directionStr.includes('red') || directionStr === '<p style="color:red">+</p>') changeSign = 1;
+          else if (directionStr === '-' || directionStr.includes('green') || directionStr === '<p style="color:green">-</p>') changeSign = -1;
+          else changeSign = 0;
+          
+          const changeStr = String(row[10] || '').replace(/,/g, '').replace(/\+/g, '').replace(/\-/g, '').trim();
+          change = parseFloat(changeStr);
+          if (isNaN(change)) change = 0;
+          change = change * changeSign;
+        }
+        
+        // 如果收盤價無效，嘗試用最高價或開盤價修復
         if (isNaN(closePrice) || closePrice <= 0) {
-          const highPrice = parseFloat(String(row[6] || '').replace(/,/g, '').trim());
-          const openPrice = parseFloat(String(row[5] || '').replace(/,/g, '').trim());
+          const highIdx = isStockDayAll ? 5 : 6;
+          const openIdx = isStockDayAll ? 4 : 5;
+          const highPrice = parseFloat(String(row[highIdx] || '').replace(/,/g, '').trim());
+          const openPrice = parseFloat(String(row[openIdx] || '').replace(/,/g, '').trim());
           closePrice = (!isNaN(highPrice) && highPrice > 0) ? highPrice : 
                        (!isNaN(openPrice) && openPrice > 0) ? openPrice : 0;
-        }
-        
-        // 解析漲跌符號 - 第 9 欄
-        const directionStr = String(row[9] || '').trim();
-        let changeSign = 0; // 預設平盤
-        
-        if (directionStr === '+' || directionStr.includes('red') || directionStr === '<p style="color:red">+</p>') {
-          changeSign = 1; // 上漲
-        } else if (directionStr === '-' || directionStr.includes('green') || directionStr === '<p style="color:green">-</p>') {
-          changeSign = -1; // 下跌
-        } else if (directionStr === 'X0' || directionStr === ' ' || directionStr === '') {
-          changeSign = 0; // 平盤
-        }
-        
-        // 解析漲跌價差 - 第 10 欄（絕對值）
-        let change = 0;
-        const changeStr = String(row[10] || '').replace(/,/g, '').replace(/\+/g, '').replace(/\-/g, '').trim();
-        
-        if (changeStr && changeStr !== '0.00' && changeStr !== '---') {
-          const changeAbs = parseFloat(changeStr);
-          if (!isNaN(changeAbs) && changeAbs > 0) {
-            change = changeAbs * changeSign;
-          }
         }
         
         // 計算漲跌幅
@@ -201,19 +215,6 @@ const TWStockRSMonitor = () => {
         }
         
         const industryCode = code.substring(0, 2);
-        
-        // 除錯：輸出關鍵股票資料
-        if (idx < 5 || code === '2330' || code === '2881' || code === '2454' || code === '2412') {
-          console.log(`[${idx}] ${code} ${name}:`, {
-            收盤價: closePrice,
-            漲跌符號: `"${directionStr}" → ${changeSign === 1 ? '上漲' : changeSign === -1 ? '下跌' : '平盤'}`,
-            漲跌價差: change,
-            漲跌幅: `${changePercent.toFixed(2)}%`,
-            原始欄位8: row[8],
-            原始欄位9: row[9],
-            原始欄位10: row[10]
-          });
-        }
         
         return {
           code,
@@ -231,9 +232,27 @@ const TWStockRSMonitor = () => {
           }
         };
       }).filter(stock => {
-        // 過濾條件：股價 > 0 且代號是 4 碼數字
         return stock.price > 0 && stock.code.length === 4 && /^\d{4}$/.test(stock.code);
       });
+      
+      if (stockList.length === 0) {
+        throw new Error('無有效股票資料，請稍後再試');
+      }
+      
+      setLoadingProgress(100);
+      setStocks(stockList);
+      console.log('成功載入股票數量:', stockList.length);
+      
+      if (autoNotify) {
+        setTimeout(() => autoCheckAndNotify(stockList), 1000);
+      }
+    } catch (err) {
+      console.error('載入失敗:', err);
+      setError(err.message || '無法載入台股資料，請檢查網路或稍後再試');
+    } finally {
+      setLoading(false);
+    }
+  };
       
       if (stockList.length === 0) {
         throw new Error('無有效股票資料，請稍後再試');
