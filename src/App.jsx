@@ -145,40 +145,55 @@ const TWStockRSMonitor = () => {
       
       setLoadingProgress(50);
       
-      const stockList = stockData.map(row => {
+      const stockList = stockData.map((row, idx) => {
         const code = row[0]?.trim() || '';
         const name = row[1]?.trim() || '';
         
-        // 解析收盤價 - 通常在第 8 個欄位
+        // 證交所 API 欄位格式（以 2881 富邦金為標準）：
+        // [0]證券代號 [1]證券名稱 [2]成交股數 [3]成交筆數 [4]成交金額 
+        // [5]開盤價 [6]最高價 [7]最低價 [8]收盤價 
+        // [9]漲跌(+/-/X0) [10]漲跌價差 [11]最後揭示買價 [12]最後揭示買量
+        // [13]最後揭示賣價 [14]最後揭示賣量 [15]本益比
+        
+        // 解析收盤價 - 第 8 欄
         let closePrice = 0;
-        const possiblePriceFields = [8, 6, 5, 4];
-        for (let index of possiblePriceFields) {
-          const priceStr = String(row[index] || '').replace(/,/g, '').replace(/[+\-]/g, '').trim();
-          const price = parseFloat(priceStr);
-          if (!isNaN(price) && price >= 1 && price <= 10000) {
-            closePrice = price;
-            break;
+        const closePriceStr = String(row[8] || '').replace(/,/g, '').trim();
+        closePrice = parseFloat(closePriceStr);
+        
+        // 如果收盤價無效，嘗試用最高價或開盤價
+        if (isNaN(closePrice) || closePrice <= 0) {
+          const highPrice = parseFloat(String(row[6] || '').replace(/,/g, '').trim());
+          const openPrice = parseFloat(String(row[5] || '').replace(/,/g, '').trim());
+          closePrice = (!isNaN(highPrice) && highPrice > 0) ? highPrice : 
+                       (!isNaN(openPrice) && openPrice > 0) ? openPrice : 0;
+        }
+        
+        // 解析漲跌符號 - 第 9 欄
+        const directionStr = String(row[9] || '').trim();
+        let changeSign = 0; // 預設平盤
+        
+        if (directionStr === '+' || directionStr.includes('red') || directionStr === '<p style="color:red">+</p>') {
+          changeSign = 1; // 上漲
+        } else if (directionStr === '-' || directionStr.includes('green') || directionStr === '<p style="color:green">-</p>') {
+          changeSign = -1; // 下跌
+        } else if (directionStr === 'X0' || directionStr === ' ' || directionStr === '') {
+          changeSign = 0; // 平盤
+        }
+        
+        // 解析漲跌價差 - 第 10 欄（絕對值）
+        let change = 0;
+        const changeStr = String(row[10] || '').replace(/,/g, '').replace(/\+/g, '').replace(/\-/g, '').trim();
+        
+        if (changeStr && changeStr !== '0.00' && changeStr !== '---') {
+          const changeAbs = parseFloat(changeStr);
+          if (!isNaN(changeAbs) && changeAbs > 0) {
+            change = changeAbs * changeSign;
           }
         }
         
-        // 解析漲跌 - 通常在第 9 個欄位
-        let change = 0;
-        const changeStr = String(row[9] || '').replace(/,/g, '').trim();
-        if (changeStr) {
-          change = parseFloat(changeStr);
-          if (isNaN(change)) change = 0;
-        }
-        
-        // 解析漲跌幅 - 通常在第 10 個欄位
+        // 計算漲跌幅
         let changePercent = 0;
-        const changePercentStr = String(row[10] || '').replace(/,/g, '').replace(/%/g, '').trim();
-        if (changePercentStr) {
-          changePercent = parseFloat(changePercentStr);
-          if (isNaN(changePercent)) changePercent = 0;
-        }
-        
-        // 如果沒有漲跌幅，從漲跌和收盤價計算
-        if (changePercent === 0 && change !== 0 && closePrice > 0) {
+        if (change !== 0 && closePrice > 0) {
           const previousClose = closePrice - change;
           if (previousClose > 0) {
             changePercent = (change / previousClose) * 100;
@@ -186,6 +201,19 @@ const TWStockRSMonitor = () => {
         }
         
         const industryCode = code.substring(0, 2);
+        
+        // 除錯：輸出關鍵股票資料
+        if (idx < 5 || code === '2330' || code === '2881' || code === '2454' || code === '2412') {
+          console.log(`[${idx}] ${code} ${name}:`, {
+            收盤價: closePrice,
+            漲跌符號: `"${directionStr}" → ${changeSign === 1 ? '上漲' : changeSign === -1 ? '下跌' : '平盤'}`,
+            漲跌價差: change,
+            漲跌幅: `${changePercent.toFixed(2)}%`,
+            原始欄位8: row[8],
+            原始欄位9: row[9],
+            原始欄位10: row[10]
+          });
+        }
         
         return {
           code,
@@ -202,7 +230,10 @@ const TWStockRSMonitor = () => {
             year1: changePercent * 48
           }
         };
-      }).filter(stock => stock.price > 0 && stock.code.length === 4);
+      }).filter(stock => {
+        // 過濾條件：股價 > 0 且代號是 4 碼數字
+        return stock.price > 0 && stock.code.length === 4 && /^\d{4}$/.test(stock.code);
+      });
       
       if (stockList.length === 0) {
         throw new Error('無有效股票資料，請稍後再試');
@@ -721,26 +752,73 @@ const TWStockRSMonitor = () => {
         {/* 除錯資訊 */}
         {stocks.length > 0 && showDebugInfo && rawApiData && (
           <div className="bg-slate-900 text-emerald-400 rounded-2xl p-5 mb-6 font-mono text-xs overflow-x-auto border border-slate-700">
-            <h3 className="text-white font-bold mb-3 text-base">🔍 API 原始資料（除錯用）</h3>
-            <div className="space-y-3">
+            <h3 className="text-white font-bold mb-3 text-base">🔍 API 原始資料除錯面板</h3>
+            <div className="space-y-4">
               <div>
                 <strong className="text-amber-400">API 狀態:</strong> 
-                <span className="ml-2">{rawApiData.stat || 'N/A'}</span>
+                <span className="ml-2 text-white">{rawApiData.stat || 'N/A'}</span>
               </div>
               <div>
-                <strong className="text-amber-400">資料筆數:</strong> 
-                <span className="ml-2">{(rawApiData.data9 || rawApiData.data)?.length || 0}</span>
+                <strong className="text-amber-400">總資料筆數:</strong> 
+                <span className="ml-2 text-white">{(rawApiData.data9 || rawApiData.data)?.length || 0}</span>
               </div>
               <div>
-                <strong className="text-amber-400">第一筆原始資料:</strong>
+                <strong className="text-amber-400">成功解析筆數:</strong> 
+                <span className="ml-2 text-white">{stocks.length}</span>
+              </div>
+              
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">欄位格式說明（以 2881 富邦金為標準）:</strong>
+                <div className="mt-2 bg-slate-800 p-3 rounded-lg text-cyan-300 text-xs leading-relaxed">
+                  [0]證券代號 [1]證券名稱 [2]成交股數 [3]成交筆數 [4]成交金額<br/>
+                  [5]開盤價 [6]最高價 [7]最低價 <strong className="text-yellow-300">[8]收盤價</strong><br/>
+                  <strong className="text-yellow-300">[9]漲跌符號(+/-/X0)</strong> <strong className="text-yellow-300">[10]漲跌價差</strong> [11]買價 [12]買量 [13]賣價 [14]賣量
+                </div>
+              </div>
+
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">關鍵股票解析對比:</strong>
+                {['2330', '2881', '2454', '2412', '2317'].map(code => {
+                  const rawStock = (rawApiData.data9 || rawApiData.data)?.find(row => row[0]?.includes(code));
+                  const parsedStock = stocks.find(s => s.code === code);
+                  if (!rawStock || !parsedStock) return null;
+                  
+                  return (
+                    <div key={code} className="mt-3 bg-slate-800 p-3 rounded-lg">
+                      <div className="text-white font-bold mb-2">
+                        {code} {parsedStock.name}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <div className="text-cyan-400 mb-1">📋 原始資料:</div>
+                          <div className="text-emerald-300">
+                            [8]收盤: <strong>{rawStock[8]}</strong><br/>
+                            [9]符號: <strong>{rawStock[9]}</strong><br/>
+                            [10]價差: <strong>{rawStock[10]}</strong>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-cyan-400 mb-1">✅ 解析結果:</div>
+                          <div className="text-emerald-300">
+                            收盤價: <strong className="text-white">{parsedStock.price.toFixed(2)}</strong><br/>
+                            漲跌: <strong className={parsedStock.change >= 0 ? 'text-red-400' : 'text-green-400'}>
+                              {parsedStock.change >= 0 ? '+' : ''}{parsedStock.change.toFixed(2)}
+                            </strong><br/>
+                            漲跌幅: <strong className={parsedStock.changePercent >= 0 ? 'text-red-400' : 'text-green-400'}>
+                              {parsedStock.changePercent >= 0 ? '+' : ''}{parsedStock.changePercent.toFixed(2)}%
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-slate-700 pt-3">
+                <strong className="text-amber-400">前 3 筆完整原始資料:</strong>
                 <pre className="mt-2 bg-slate-800 p-3 rounded-lg overflow-x-auto text-emerald-300">
-                  {JSON.stringify((rawApiData.data9 || rawApiData.data)?.[0], null, 2)}
-                </pre>
-              </div>
-              <div>
-                <strong className="text-amber-400">解析結果範例 (台積電 2330):</strong>
-                <pre className="mt-2 bg-slate-800 p-3 rounded-lg overflow-x-auto text-emerald-300">
-                  {JSON.stringify(stocks.find(s => s.code === '2330'), null, 2)}
+                  {JSON.stringify((rawApiData.data9 || rawApiData.data)?.slice(0, 3), null, 2)}
                 </pre>
               </div>
             </div>
